@@ -32,9 +32,42 @@ docker run -d --name or-proxy -p 8787:8787 \
 
 | 변수 | 기본값 | 설명 |
 |---|---|---|
-| `OR_PROVIDER` | `{"only":["baidu"],"allow_fallbacks":false}` | 고정할 제공사. `baidu`(base, 전 endpoint 매칭) 또는 `baidu/fp8`(특정 endpoint만) |
+| `OR_PROVIDER` | `{"only":["baidu"],"allow_fallbacks":false}` | 요청에 provider가 없고 라우트에도 없을 때의 기본 고정값 |
+| `OR_ROUTES` | `{}` (없음) | 모델별 provider 테이블(JSON). 아래 "동적 선택" 참고 |
 | `HOST_PORT` | `8787` | 호스트 바인딩 포트 (컨테이너 내부는 8787 고정) |
 | `PORT` | `8787` | 변경 불필요 |
+
+## 모델·프로바이더 동적 선택 (재시작 없이 바꾸는 법)
+
+모델명은 프록시가 절대 건드리지 않는다. Claude Code의 `ANTHROPIC_MODEL` 값이
+그대로 OpenRouter에 전달되므로, 모델을 바꾸려면 터미널 세션에서 변수만 바꾸면 된다.
+DeepSeek에 하드코딩되어 있지 않다.
+
+```powershell
+$env:ANTHROPIC_MODEL="deepseek/deepseek-v4.1-flash"   # 다른 OpenRouter 모델 ID도 그대로 통과
+```
+
+프로바이더는 요청별로 이렇게 결정된다 (위에서부터 처음 맞는 것):
+
+1. 요청 body에 `provider`가 이미 있으면 **그것을 존중** (직접 API 코드에서 모델마다 다르게 지정 가능).
+2. `OR_ROUTES` 테이블에 요청 model과 일치하는 항목이 있으면 그것을 사용.
+3. `OR_ROUTES`의 `"*"` 항목이 있으면 그것을 사용.
+4. 위가 다 없으면 `OR_PROVIDER` 기본값.
+
+`OR_ROUTES` 예시 (한 줄 JSON):
+
+```bash
+OR_ROUTES='{"deepseek/deepseek-v4.1-flash":{"only":["streamlake/fp8"],"allow_fallbacks":false},"z-ai/glm-4.6":{"only":["z-ai"],"allow_fallbacks":false},"*":{"only":["deepinfra"],"allow_fallbacks":true}}'
+```
+
+compose에서 쓰려면 `docker-compose.yml`의 environment에 추가한다:
+
+```yaml
+OR_ROUTES: '{"deepseek/deepseek-v4.1-flash":{"only":["streamlake/fp8"],"allow_fallbacks":false}}'
+```
+
+즉, Claude Code에서 `ANTHROPIC_MODEL`만 바꾸면 모델이 바뀌고,
+모델별 핀은 `OR_ROUTES` 한 줄로 관리된다. 컨테이너를 모델마다 띄울 필요가 없다.
 
 제공사를 바꾸려면 `docker-compose.yml`의 `OR_PROVIDER` 한 줄만 교체 후 `docker compose up -d`:
 
@@ -49,37 +82,30 @@ OR_PROVIDER: '{"only":["streamlake/fp8"],"allow_fallbacks":false}'
 
 프록시가 뜬 상태에서 **새 터미널**에 아래를 설정한다. 셸 프로파일·`~/.claude`는 건드리지 않는다.
 
-PowerShell:
+PowerShell (최소 4개):
 
 ```powershell
 $env:ANTHROPIC_BASE_URL="http://localhost:8787"
 $env:ANTHROPIC_AUTH_TOKEN=$env:OPENROUTER_API_KEY
 $env:ANTHROPIC_API_KEY=""
 $env:ANTHROPIC_MODEL="deepseek/deepseek-v4.1-flash"
-$env:ANTHROPIC_DEFAULT_FABLE_MODEL="deepseek/deepseek-v4.1-flash"
-$env:ANTHROPIC_DEFAULT_OPUS_MODEL="deepseek/deepseek-v4.1-flash"
-$env:ANTHROPIC_DEFAULT_SONNET_MODEL="deepseek/deepseek-v4.1-flash"
-$env:ANTHROPIC_DEFAULT_HAIKU_MODEL="deepseek/deepseek-v4.1-flash"
-$env:CLAUDE_CODE_SUBAGENT_MODEL="deepseek/deepseek-v4.1-flash"
 claude -p "현재 디렉터리의 파일 목록을 보여줘"
 ```
 
-bash:
+bash (최소 4개):
 
 ```bash
 export ANTHROPIC_BASE_URL="http://localhost:8787"
 export ANTHROPIC_AUTH_TOKEN="$OPENROUTER_API_KEY"
 export ANTHROPIC_API_KEY=""
-for v in FABLE OPUS SONNET HAIKU; do export ANTHROPIC_DEFAULT_${v}_MODEL="deepseek/deepseek-v4.1-flash"; done
 export ANTHROPIC_MODEL="deepseek/deepseek-v4.1-flash"
-export CLAUDE_CODE_SUBAGENT_MODEL="deepseek/deepseek-v4.1-flash"
 claude -p "현재 디렉터리의 파일 목록을 보여줘"
 ```
 
 주의:
 
-- 기존 셸에 `ANTHROPIC_MODEL`이 남아 있으면 per-class 변수보다 우선 적용되므로
-  위처럼 `$env:ANTHROPIC_MODEL`도 함께 지정해야 한다.
+- 기존 셸에 다른 `ANTHROPIC_MODEL`이 남아 있으면 그것이 그대로 전달되므로
+  위처럼 세션에서 함께 지정해야 한다.
 - 기존 Anthropic 로그인이 캐시되어 충돌하면 Claude Code에서 `/logout` 후 재시작
   (판단되면 직접 하지 말고 확인 후 진행).
 - 타사 모델에서는 Claude Code의 일부 도구 호출 호환성이 떨어질 수 있다
@@ -112,8 +138,8 @@ curl -s http://localhost:8787/v1/messages \
 
 ```text
 proxy-ai/
-├── or-proxy.mjs        # 패스스루 프록시 (Node 18+, 의존성 없음)
-├── Dockerfile           # node:22-alpine 기반
+├── or-proxy.py         # 패스스루 프록시 (Python 표준라이브러리만, 의존성 없음)
+├── Dockerfile           # python:3-alpine 기반
 ├── docker-compose.yml   # OR_PROVIDER / HOST_PORT 설정
 ├── .env.example         # 로컬 설정 템플릿 (복사해서 .env 로 사용)
 └── README.md

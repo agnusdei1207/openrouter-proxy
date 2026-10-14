@@ -11,4 +11,6 @@ services:
       # Baidu Qianfan으로 고정 (약 50% 할인). StreamLake로 바꾸려면 아래 한 줄을 교체:
       # OR_PROVIDER: '{"only":["streamlake/fp8"],"allow_fallbacks":false}'
       OR_PROVIDER: ${OR_PROVIDER:-{"only":["baidu"],"allow_fallbacks":false}}
+      # 모델별 동적 핀 (없으면 OR_PROVIDER 사용). 예시:
+      # OR_ROUTES: '{"deepseek/deepseek-v4.1-flash":{"only":["streamlake/fp8"],"allow_fallbacks":false}}'
     restart: unless-stopped

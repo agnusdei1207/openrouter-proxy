@@ -1,6 +1,6 @@
-FROM node:22-alpine
+FROM python:3-alpine
 WORKDIR /app
-COPY or-proxy.mjs .
+COPY or-proxy.py .
 ENV PORT=8787
 EXPOSE 8787
-CMD ["node", "or-proxy.mjs"]
+CMD ["python", "or-proxy.py"]
