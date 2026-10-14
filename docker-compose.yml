@@ -1,0 +1,14 @@
+name: proxy-ai
+
+services:
+  or-proxy:
+    build: .
+    image: agnusdei1207/proxy-ai:latest
+    ports:
+      - "${HOST_PORT:-8787}:8787"
+    environment:
+      PORT: "8787"
+      # Baidu Qianfan으로 고정 (약 50% 할인). StreamLake로 바꾸려면 아래 한 줄을 교체:
+      # OR_PROVIDER: '{"only":["streamlake/fp8"],"allow_fallbacks":false}'
+      OR_PROVIDER: ${OR_PROVIDER:-{"only":["baidu"],"allow_fallbacks":false}}
+    restart: unless-stopped
