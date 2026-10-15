@@ -17,16 +17,17 @@ docker compose up -d --build
 ```json
 {
   "claude-*": {
-    "model": "deepseek/deepseek-v4.1-flash",
-    "provider": { "only": ["baidu"], "allow_fallbacks": false },
+    "model": ["deepseek/deepseek-v4.1-flash"],
+    "provider": ["baidu", "streamlake/fp8"],
     "effort": "high"
   },
   "*": { "provider": { "allow_fallbacks": true } }
 }
 ```
 
-- `model`: OpenRouter 모델 ID로 교체
-- `provider`: [OpenRouter provider routing](https://openrouter.ai/docs/features/provider-routing) (`only`, `order`, `allow_fallbacks` 등)
+- `model`: OpenRouter 모델 ID. 배열이면 앞에서부터 순서대로 폴백 (`models`)
+- `provider`: 배열(또는 문자열)이면 나열한 제공사만 순서대로 시도 (`{"order": [...], "allow_fallbacks": false}`).
+  객체면 [OpenRouter provider routing](https://openrouter.ai/docs/features/provider-routing) 그대로
 - `effort`: `none` | `low` | `medium` | `high` — 엔드포인트에 맞게 변환된다
   (`/v1/messages` → `output_config.effort`, `none`이면 `thinking` 비활성 / `/v1/chat/completions` → `reasoning.effort`)
 - 그 밖의 필드는 요청 body에 그대로 덮어쓴다

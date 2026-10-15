@@ -1,7 +1,7 @@
 {
   "claude-*": {
-    "model": "deepseek/deepseek-v4.1-flash",
-    "provider": { "only": ["baidu"], "allow_fallbacks": false },
+    "model": ["deepseek/deepseek-v4.1-flash"],
+    "provider": ["baidu", "streamlake/fp8"],
     "effort": "high"
   },
   "*": {

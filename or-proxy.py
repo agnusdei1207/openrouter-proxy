@@ -65,6 +65,15 @@ def apply(body, path):
     rule = rule_for(body.get("model"))
     rule = dict(rule) if isinstance(rule, dict) else {}
     effort = rule.pop("effort", None)
+    # 배열 축약형: 앞에서부터 순서대로 시도
+    model = rule.get("model")
+    if isinstance(model, list):
+        rule["model"], rule["models"] = model[0], model
+    provider = rule.get("provider")
+    if isinstance(provider, str):
+        provider = [provider]
+    if isinstance(provider, list):
+        rule["provider"] = {"order": provider, "allow_fallbacks": False}
     body.update(rule)  # model, provider 등 나머지 필드는 그대로 덮어쓴다
     messages_api = path.startswith("/v1/messages")
     if effort:
