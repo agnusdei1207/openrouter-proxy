@@ -2,7 +2,7 @@
   "claude-*": {
     "model": "deepseek/deepseek-v4.1-flash",
     "provider": { "only": ["baidu"], "allow_fallbacks": false },
-    "reasoning": { "effort": "high" }
+    "effort": "high"
   },
   "*": {
     "provider": { "allow_fallbacks": true }

@@ -19,7 +19,7 @@ docker compose up -d --build
   "claude-*": {
     "model": "deepseek/deepseek-v4.1-flash",
     "provider": { "only": ["baidu"], "allow_fallbacks": false },
-    "reasoning": { "effort": "high" }
+    "effort": "high"
   },
   "*": { "provider": { "allow_fallbacks": true } }
 }
@@ -27,7 +27,9 @@ docker compose up -d --build
 
 - `model`: OpenRouter 모델 ID로 교체
 - `provider`: [OpenRouter provider routing](https://openrouter.ai/docs/features/provider-routing) (`only`, `order`, `allow_fallbacks` 등)
-- `reasoning.effort`: `minimal` | `low` | `medium` | `high`
+- `effort`: `none` | `low` | `medium` | `high` — 엔드포인트에 맞게 변환된다
+  (`/v1/messages` → `output_config.effort`, `none`이면 `thinking` 비활성 / `/v1/chat/completions` → `reasoning.effort`)
+- 그 밖의 필드는 요청 body에 그대로 덮어쓴다
 
 ## Claude Code
 
@@ -39,4 +41,5 @@ claude
 ```
 
 Claude Code가 보내는 `claude-*` 모델명은 위 규칙으로 교체되므로 모델 변수는 필요 없다.
+Anthropic 외 모델로 갈 때는 Claude Code가 대화 중간에 넣는 `system` 메시지를 최상위 `system`으로 옮겨 호환시킨다.
 OpenAI 호환 클라이언트는 base URL `http://localhost:8787/v1` 로 쓰면 된다.
