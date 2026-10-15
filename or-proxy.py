@@ -4,10 +4,13 @@ import json
 import os
 import queue
 import socket
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 CONFIG = os.environ.get("CONFIG") or "config.json"
 PORT = int(os.environ.get("PORT") or 8787)
+RETRIES = int(os.environ.get("RETRIES") or 5)  # 일시적 실패 시 최대 재시도 횟수
+RETRY_STATUS = {408, 429, 500, 502, 503, 504, 529}
 UPSTREAM = "openrouter.ai"
 
 SKIP_REQ = {"accept-encoding", "connection", "keep-alive", "host", "content-length"}
@@ -89,11 +92,30 @@ def apply(body, path):
         hoist_system(body)
 
 
+def new_conn():
+    return http.client.HTTPSConnection(UPSTREAM, timeout=600)
+
+
 def get_conn():
     try:
         return _pool.get_nowait()
     except queue.Empty:
-        return http.client.HTTPSConnection(UPSTREAM, timeout=600)
+        return new_conn()
+
+
+def release(conn, up):
+    if up.will_close:
+        conn.close()
+    else:
+        put_conn(conn)  # 응답을 끝까지 읽은 연결만 재사용
+
+
+def backoff(attempt, up=None):
+    try:
+        wait = float(up.getheader("retry-after")) if up is not None else 0
+    except (TypeError, ValueError):
+        wait = 0
+    return min(max(wait, 2 ** attempt), 20)  # 1, 2, 4, 8, 16초… (Retry-After 우선, 최대 20초)
 
 
 def put_conn(conn):
@@ -128,17 +150,42 @@ class Handler(BaseHTTPRequestHandler):
             headers["Content-Length"] = str(len(body))
         send_body = body if self.command not in ("GET", "HEAD") else None
 
-        conn = get_conn()
-        try:
+        conn, up, error = None, None, None
+        for attempt in range(RETRIES + 1):
+            conn = get_conn() if attempt == 0 else new_conn()
             try:
                 conn.request(self.command, "/api" + url, body=send_body, headers=headers)
                 up = conn.getresponse()
-            except (http.client.HTTPException, OSError):
-                # 풀에 있던 연결이 끊겼을 수 있음 → 새 연결로 1회 재시도
+            except (http.client.HTTPException, OSError) as e:
+                # 연결 실패 / 풀에 있던 연결이 끊김 → 재시도
                 conn.close()
-                conn = http.client.HTTPSConnection(UPSTREAM, timeout=600)
-                conn.request(self.command, "/api" + url, body=send_body, headers=headers)
-                up = conn.getresponse()
+                conn, up, error = None, None, e
+                if attempt < RETRIES:
+                    print("retry", attempt + 1, url, repr(e), flush=True)
+                    time.sleep(0 if attempt == 0 else backoff(attempt - 1))
+                continue
+            if up.status in RETRY_STATUS and attempt < RETRIES:
+                up.read()
+                release(conn, up)
+                print("retry", attempt + 1, url, up.status, flush=True)
+                time.sleep(backoff(attempt, up))
+                conn = up = None
+                continue
+            break
+
+        if up is None:
+            # 재시도를 다 써도 연결 자체가 안 됨
+            try:
+                self.send_response(502, "Bad Gateway")
+                self.send_header("content-type", "text/plain")
+                self.end_headers()
+                self.wfile.write(("proxy error: " + str(error)).encode("utf-8"))
+            except Exception:
+                pass
+            return
+
+        # 성공했거나, 재시도할 수 없는 에러이거나, 재시도를 다 쓴 마지막 응답 → 그대로 전달
+        try:
             self.send_response(up.status)
             for k, v in up.getheaders():
                 if k.lower() not in SKIP_RES:
@@ -150,22 +197,9 @@ class Handler(BaseHTTPRequestHandler):
                     break
                 self.wfile.write(chunk)
                 self.wfile.flush()
-            if up.will_close:
-                conn.close()
-            else:
-                put_conn(conn)  # 응답을 끝까지 읽은 연결만 재사용
-            conn = None
-        except Exception as e:
-            try:
-                self.send_response(502, "Bad Gateway")
-                self.send_header("content-type", "text/plain")
-                self.end_headers()
-                self.wfile.write(("proxy error: " + str(e)).encode("utf-8"))
-            except Exception:
-                pass
-        finally:
-            if conn is not None:
-                conn.close()
+            release(conn, up)
+        except Exception:
+            conn.close()  # 클라이언트가 중간에 끊음
 
     do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = do_OPTIONS = _proxy
 

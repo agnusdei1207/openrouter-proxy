@@ -32,6 +32,11 @@ docker compose up -d --build
   (`/v1/messages` → `output_config.effort`, `none`이면 `thinking` 비활성 / `/v1/chat/completions` → `reasoning.effort`)
 - 그 밖의 필드는 요청 body에 그대로 덮어쓴다
 
+## 재시도
+
+429 / 5xx / 연결 실패는 프록시가 자동 재시도한다(1·2·4·8·16초 대기, `Retry-After` 우선).
+`RETRIES`(기본 5)번을 넘기면 마지막 에러를 그대로 돌려준다. 400·401·402·404 등은 즉시 반환.
+
 ## Claude Code
 
 ```powershell
