@@ -1,34 +1,37 @@
+import fnmatch
 import http.client
 import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-# 기본 provider 고정. 요청 body에 provider가 이미 있으면 클라이언트 선택을 존중한다.
-PROVIDER = json.loads(os.environ.get("OR_PROVIDER") or '{"only":["baidu"],"allow_fallbacks":false}')
-
-# 모델별 provider 테이블 (동적 선택). 예:
-# OR_ROUTES='{"deepseek/deepseek-v4.1-flash":{"only":["baidu"],"allow_fallbacks":false},"z-ai/glm-4.6":{"only":["z-ai"],"allow_fallbacks":false},"*":{"only":["deepinfra"],"allow_fallbacks":true}}'
-# - 요청의 model과 일치하는 항목을 사용, 없으면 "*" 항목, 그것도 없으면 OR_PROVIDER.
-# - 모델명 자체는 프록시가 건드리지 않는다. Claude Code의 ANTHROPIC_MODEL이 그대로 전달된다.
-try:
-    ROUTES = json.loads(os.environ.get("OR_ROUTES") or "{}")
-    if not isinstance(ROUTES, dict):
-        ROUTES = {}
-except Exception:
-    ROUTES = {}
-
+CONFIG = os.environ.get("CONFIG") or "config.json"
 PORT = int(os.environ.get("PORT") or 8787)
 
 SKIP_REQ = {"accept-encoding", "connection", "host", "content-length"}
-SKIP_RES = {"content-encoding", "content-length", "transfer-encoding"}
+SKIP_RES = {"connection", "keep-alive", "content-encoding", "content-length", "transfer-encoding"}
 
 
-def provider_for(model):
-    if isinstance(model, str) and model in ROUTES:
-        return ROUTES[model]
-    if "*" in ROUTES:
-        return ROUTES["*"]
-    return PROVIDER
+def load_config():
+    # 요청마다 읽는다 → config.json 수정 즉시 반영 (재시작 불필요)
+    try:
+        with open(CONFIG, encoding="utf-8") as f:
+            cfg = json.load(f)
+        return cfg if isinstance(cfg, dict) else {}
+    except Exception:
+        return {}
+
+
+def rule_for(model):
+    # 정확히 일치하는 키 우선, 그다음 와일드카드 키를 파일 순서대로
+    cfg = load_config()
+    if not isinstance(model, str):
+        model = ""
+    if model in cfg:
+        return cfg[model]
+    for pattern, rule in cfg.items():
+        if fnmatch.fnmatchcase(model, pattern):
+            return rule
+    return {}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -42,19 +45,19 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             length = 0
         body = self.rfile.read(length) if length > 0 else b""
-        # Claude Code는 /v1/messages(Anthropic), 직접 코드는 /v1/chat/completions(OpenAI) 사용.
-        if self.command == "POST" and (url.startswith("/v1/messages") or url.startswith("/v1/chat/completions")):
+        if self.command == "POST" and body:
             try:
-                j = json.loads(body.decode("utf-8") if body else "{}")
-                if isinstance(j, dict) and "provider" not in j:
-                    j["provider"] = provider_for(j.get("model"))
+                j = json.loads(body)
+                rule = rule_for(j.get("model"))
+                if isinstance(rule, dict) and rule:
+                    j.update(rule)  # 규칙의 필드(model, provider, reasoning 등)로 덮어쓴다
                     body = json.dumps(j).encode("utf-8")
             except Exception:
-                pass  # JSON이 아니면(빈 body 등) 그대로 패스스루
+                pass  # JSON이 아니면 그대로 패스스루
         headers = {k: v for k, v in self.headers.items() if k.lower() not in SKIP_REQ}
         headers["Host"] = "openrouter.ai"
         headers["Content-Length"] = str(len(body))
-        conn = http.client.HTTPSConnection("openrouter.ai", timeout=300)
+        conn = http.client.HTTPSConnection("openrouter.ai", timeout=600)
         try:
             conn.request(
                 self.command,
@@ -69,10 +72,11 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_header(k, v)
             self.end_headers()
             while True:
-                chunk = up.read(65536)
+                chunk = up.read1(65536)
                 if not chunk:
                     break
                 self.wfile.write(chunk)
+                self.wfile.flush()
         except Exception as e:
             try:
                 self.send_response(502, "Bad Gateway")
@@ -91,8 +95,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    routes_note = ("routes:" + ",".join(ROUTES)) if ROUTES else "no-routes"
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     server.daemon_threads = True
-    print("listening on", PORT, json.dumps(provider_for(None)), routes_note, flush=True)
+    print("listening on", PORT, "config:", CONFIG, flush=True)
     server.serve_forever()
