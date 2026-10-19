@@ -9,7 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 CONFIG = os.environ.get("CONFIG") or "config.json"
 PORT = int(os.environ.get("PORT") or 8787)
-RETRIES = int(os.environ.get("RETRIES") or 5)  # 일시적 실패 시 최대 재시도 횟수
+RETRIES = int(os.environ.get("RETRIES") or 5)  # max retries on transient failures
 RETRY_STATUS = {408, 429, 500, 502, 503, 504, 529}
 UPSTREAM = "openrouter.ai"
 
@@ -21,7 +21,7 @@ _pool = queue.LifoQueue(maxsize=16)
 
 
 def load_config():
-    # 파일이 바뀌면 다시 읽는다 → 수정 즉시 반영 (재시작 불필요)
+    # reload when the file changes → edits apply immediately (no restart)
     try:
         mtime = os.path.getmtime(CONFIG)
         if mtime != _cfg["mtime"]:
@@ -30,12 +30,12 @@ def load_config():
             _cfg["data"] = data if isinstance(data, dict) else {}
             _cfg["mtime"] = mtime
     except Exception:
-        pass  # 파일이 없거나 JSON이 깨졌으면 마지막 정상 설정 유지
+        pass  # missing file or broken JSON: keep the last good config
     return _cfg["data"]
 
 
 def rule_for(model):
-    # 정확히 일치하는 키 우선, 그다음 와일드카드 키를 파일 순서대로
+    # exact key match first, then wildcard keys in file order
     cfg = load_config()
     if not isinstance(model, str):
         model = ""
@@ -48,8 +48,8 @@ def rule_for(model):
 
 
 def hoist_system(body):
-    # Claude Code는 messages 중간에 role:"system"을 넣는데, Anthropic 외 모델은 이를 거부한다
-    # → 최상위 system 으로 옮긴다
+    # Claude Code puts role:"system" inside messages, which non-Anthropic models reject
+    # → move them to the top-level system
     msgs = body.get("messages")
     if not isinstance(msgs, list) or not any(m.get("role") == "system" for m in msgs):
         return
@@ -68,7 +68,7 @@ def apply(body, path):
     rule = rule_for(body.get("model"))
     rule = dict(rule) if isinstance(rule, dict) else {}
     effort = rule.pop("effort", None)
-    # 배열 축약형: 앞에서부터 순서대로 시도
+    # array shorthand: try in order, first to last
     model = rule.get("model")
     if isinstance(model, list):
         rule["model"], rule["models"] = model[0], model
@@ -77,10 +77,10 @@ def apply(body, path):
         provider = [provider]
     if isinstance(provider, list):
         rule["provider"] = {"order": provider, "allow_fallbacks": False}
-    body.update(rule)  # model, provider 등 나머지 필드는 그대로 덮어쓴다
+    body.update(rule)  # model, provider and any other fields overwrite as-is
     messages_api = path.startswith("/v1/messages")
     if effort:
-        # OpenRouter: Anthropic 형식은 thinking/output_config, OpenAI 형식은 reasoning 만 인식한다
+        # OpenRouter: Anthropic format only honors thinking/output_config, OpenAI format only reasoning
         if not messages_api:
             body["reasoning"] = {"effort": effort}
         elif effort == "none":
@@ -107,7 +107,7 @@ def release(conn, up):
     if up.will_close:
         conn.close()
     else:
-        put_conn(conn)  # 응답을 끝까지 읽은 연결만 재사용
+        put_conn(conn)  # reuse only connections whose response was fully read
 
 
 def backoff(attempt, up=None):
@@ -115,7 +115,7 @@ def backoff(attempt, up=None):
         wait = float(up.getheader("retry-after")) if up is not None else 0
     except (TypeError, ValueError):
         wait = 0
-    return min(max(wait, 2 ** attempt), 20)  # 1, 2, 4, 8, 16초… (Retry-After 우선, 최대 20초)
+    return min(max(wait, 2 ** attempt), 20)  # 1, 2, 4, 8, 16s… (Retry-After wins, capped at 20s)
 
 
 def put_conn(conn):
@@ -126,7 +126,7 @@ def put_conn(conn):
 
 
 class Handler(BaseHTTPRequestHandler):
-    # HTTP/1.0: 응답마다 연결 종료 → Content-Length 없이 스트리밍 그대로 전달
+    # HTTP/1.0: close after each response → stream through without Content-Length
     protocol_version = "HTTP/1.0"
 
     def _proxy(self):
@@ -143,7 +143,7 @@ class Handler(BaseHTTPRequestHandler):
                     apply(j, url)
                     body = json.dumps(j).encode("utf-8")
             except Exception:
-                pass  # JSON이 아니면 그대로 패스스루
+                pass  # not JSON: pass through unchanged
         headers = {k: v for k, v in self.headers.items() if k.lower() not in SKIP_REQ}
         headers["Host"] = UPSTREAM
         if self.command not in ("GET", "HEAD"):
@@ -157,7 +157,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.request(self.command, "/api" + url, body=send_body, headers=headers)
                 up = conn.getresponse()
             except (http.client.HTTPException, OSError) as e:
-                # 연결 실패 / 풀에 있던 연결이 끊김 → 재시도
+                # connect failed / pooled connection went stale → retry
                 conn.close()
                 conn, up, error = None, None, e
                 if attempt < RETRIES:
@@ -174,7 +174,7 @@ class Handler(BaseHTTPRequestHandler):
             break
 
         if up is None:
-            # 재시도를 다 써도 연결 자체가 안 됨
+            # could not connect at all after all retries
             try:
                 self.send_response(502, "Bad Gateway")
                 self.send_header("content-type", "text/plain")
@@ -184,7 +184,7 @@ class Handler(BaseHTTPRequestHandler):
                 pass
             return
 
-        # 성공했거나, 재시도할 수 없는 에러이거나, 재시도를 다 쓴 마지막 응답 → 그대로 전달
+        # success, non-retryable error, or last response after retries ran out → forward as-is
         try:
             self.send_response(up.status)
             for k, v in up.getheaders():
@@ -199,7 +199,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.flush()
             release(conn, up)
         except Exception:
-            conn.close()  # 클라이언트가 중간에 끊음
+            conn.close()  # client disconnected mid-stream
 
     do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = do_OPTIONS = _proxy
 
@@ -208,9 +208,9 @@ class Handler(BaseHTTPRequestHandler):
 
 
 class Server(ThreadingHTTPServer):
-    # "::" + dual-stack: localhost(IPv6 우선) 접속 시 IPv4 폴백 지연 제거
+    # "::" + dual-stack: avoids the IPv4 fallback delay when localhost resolves to IPv6 first
     address_family = socket.AF_INET6
-    # Windows의 SO_REUSEADDR는 같은 포트 중복 바인딩을 허용하므로 끈다
+    # SO_REUSEADDR on Windows allows double-binding the same port, so disable it
     allow_reuse_address = os.name != "nt"
 
     def server_bind(self):
@@ -218,7 +218,7 @@ class Server(ThreadingHTTPServer):
         super().server_bind()
 
     def handle_error(self, request, client_address):
-        pass  # 클라이언트가 연결을 끊는 경우(사전 연결 등)의 traceback 소음 제거
+        pass  # silence tracebacks when clients drop connections (preconnects etc.)
 
 
 if __name__ == "__main__":

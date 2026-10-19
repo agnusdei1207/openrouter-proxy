@@ -1,18 +1,18 @@
 # proxy-ai
 
-Claude Code(Anthropic API) / OpenAI 호환 클라이언트 → OpenRouter 패스스루 프록시.
-`config.json` 규칙으로 모델·프로바이더·노력도를 요청에 덮어쓴다. 키는 저장하지 않고 클라이언트 헤더를 그대로 전달.
+Pass-through proxy from Claude Code (Anthropic API) and OpenAI-compatible clients to OpenRouter.
+Rules in `config.json` override the model, provider, and effort of each request. The proxy stores no keys; it forwards the client's headers as-is.
 
-## 실행
+## Run
 
 ```bash
 docker compose up -d --build
 ```
 
-## 설정 (`config.json`)
+## Configuration (`config.json`)
 
-키 = 들어오는 model 이름(정확히 일치 우선, 다음 `*` 와일드카드를 위에서부터). 값 = 요청 body에 덮어쓸 필드.
-수정 즉시 반영된다(재시작 불필요).
+Key = incoming model name (exact match first, then `*` wildcards from top to bottom). Value = fields to overwrite in the request body.
+Edits take effect immediately (no restart needed).
 
 ```json
 {
@@ -25,17 +25,17 @@ docker compose up -d --build
 }
 ```
 
-- `model`: OpenRouter 모델 ID. 배열이면 앞에서부터 순서대로 폴백 (`models`)
-- `provider`: 배열(또는 문자열)이면 나열한 제공사만 순서대로 시도 (`{"order": [...], "allow_fallbacks": false}`).
-  객체면 [OpenRouter provider routing](https://openrouter.ai/docs/features/provider-routing) 그대로
-- `effort`: `none` | `low` | `medium` | `high` — 엔드포인트에 맞게 변환된다
-  (`/v1/messages` → `output_config.effort`, `none`이면 `thinking` 비활성 / `/v1/chat/completions` → `reasoning.effort`)
-- 그 밖의 필드는 요청 body에 그대로 덮어쓴다
+- `model`: OpenRouter model ID. An array is a fallback order, tried first to last (`models`)
+- `provider`: an array (or string) tries only the listed providers, in order (`{"order": [...], "allow_fallbacks": false}`).
+  An object is passed through as [OpenRouter provider routing](https://openrouter.ai/docs/features/provider-routing)
+- `effort`: `none` | `low` | `medium` | `high`, converted per endpoint
+  (`/v1/messages` → `output_config.effort`, `none` disables `thinking` / `/v1/chat/completions` → `reasoning.effort`)
+- Any other field overwrites the request body as-is
 
-## 재시도
+## Retries
 
-429 / 5xx / 연결 실패는 프록시가 자동 재시도한다(1·2·4·8·16초 대기, `Retry-After` 우선).
-`RETRIES`(기본 5)번을 넘기면 마지막 에러를 그대로 돌려준다. 400·401·402·404 등은 즉시 반환.
+The proxy retries 429 / 5xx / connection failures automatically (waits 1, 2, 4, 8, 16 seconds; `Retry-After` wins).
+After `RETRIES` attempts (default 5) it returns the last error unchanged. 400, 401, 402, 404 and similar return immediately.
 
 ## Claude Code
 
@@ -46,6 +46,6 @@ $env:ANTHROPIC_API_KEY=""
 claude
 ```
 
-Claude Code가 보내는 `claude-*` 모델명은 위 규칙으로 교체되므로 모델 변수는 필요 없다.
-Anthropic 외 모델로 갈 때는 Claude Code가 대화 중간에 넣는 `system` 메시지를 최상위 `system`으로 옮겨 호환시킨다.
-OpenAI 호환 클라이언트는 base URL `http://localhost:8787/v1` 로 쓰면 된다.
+The `claude-*` model names Claude Code sends are replaced by the rules above, so no model variables are needed.
+For non-Anthropic models, the `system` messages Claude Code inserts mid-conversation are moved to the top-level `system` for compatibility.
+OpenAI-compatible clients use the base URL `http://localhost:8787/v1`.
