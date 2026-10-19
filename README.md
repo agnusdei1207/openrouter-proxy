@@ -40,30 +40,10 @@ After `RETRIES` attempts (default 5) it returns the last error unchanged. 400, 4
 ## Claude Code
 
 ```powershell
-$env:ANTHROPIC_BASE_URL="http://localhost:8787"
-$env:ANTHROPIC_AUTH_TOKEN=$env:OPENROUTER_API_KEY
-$env:ANTHROPIC_API_KEY=""
+$env:ANTHROPIC_BASE_URL="http://localhost:8787"        # route to this proxy
+$env:ANTHROPIC_AUTH_TOKEN=$env:OPENROUTER_API_KEY      # OpenRouter key
+$env:ANTHROPIC_API_KEY=""                              # empty on purpose: don't send an existing Anthropic key
 claude
-```
-
-Each variable has its own job:
-
-| Variable | Value | Why |
-|---|---|---|
-| `ANTHROPIC_BASE_URL` | `http://localhost:8787` | Sends Claude Code's requests to this proxy instead of `api.anthropic.com`. |
-| `ANTHROPIC_AUTH_TOKEN` | your OpenRouter key | Claude Code sends it as `Authorization: Bearer <key>`, the header OpenRouter expects. The proxy forwards it unchanged. |
-| `ANTHROPIC_API_KEY` | `""` (empty on purpose) | Overrides any real Anthropic key already in your environment for this session, so Claude Code sends no `x-api-key` header and the OpenRouter key is the only credential that goes out. Removing the line is not the same: a key set in your Windows user environment would still be picked up. If you have never set `ANTHROPIC_API_KEY`, the line has no effect. |
-
-`$env:` only lasts for the current PowerShell window. To make it permanent, put the same three values in the `env` block of `~/.claude/settings.json` (the key is then stored there in plain text):
-
-```json
-{
-  "env": {
-    "ANTHROPIC_BASE_URL": "http://localhost:8787",
-    "ANTHROPIC_AUTH_TOKEN": "sk-or-...",
-    "ANTHROPIC_API_KEY": ""
-  }
-}
 ```
 
 The `claude-*` model names Claude Code sends are replaced by the rules above, so no model variables are needed.
