@@ -1,9 +1,13 @@
 services:
-  or-proxy:
-    build: .
+  proxy-ai:
     image: agnusdei1207/proxy-ai:latest
     ports:
       - "8787:8787"
-    volumes:
-      - ./config.json:/app/config.json:ro
+    environment:
+      MODEL: deepseek/deepseek-v4.1-flash
+      PROVIDER: baidu,streamlake/fp8
+      EFFORT: high
+    # or remove environment and use per-model rules:
+    # volumes:
+    #   - ./config.json:/app/config.json:ro
     restart: unless-stopped

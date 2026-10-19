@@ -5,9 +5,14 @@ Rules in `config.json` override the model, provider, and effort of each request.
 
 ## Run
 
+Image: [`agnusdei1207/proxy-ai`](https://hub.docker.com/r/agnusdei1207/proxy-ai) (amd64, arm64). Set `environment` in `docker-compose.yml`, then:
+
 ```bash
-docker compose up -d --build
+docker compose up -d
 ```
+
+- `MODEL`, `PROVIDER`: comma-separated, tried in order. `EFFORT`: see below. Applied to every request.
+- If none are set, the `config.json` rules below are used instead.
 
 ## Configuration (`config.json`)
 

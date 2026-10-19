@@ -34,7 +34,24 @@ def load_config():
     return _cfg["data"]
 
 
+def env_rule():
+    # MODEL / PROVIDER (comma-separated) / EFFORT env vars: one rule for every request
+    rule = {}
+    for key in ("model", "provider"):
+        items = [s.strip() for s in os.environ.get(key.upper(), "").split(",") if s.strip()]
+        if items:
+            rule[key] = items
+    if os.environ.get("EFFORT"):
+        rule["effort"] = os.environ["EFFORT"].strip()
+    return rule
+
+
+ENV_RULE = env_rule()
+
+
 def rule_for(model):
+    if ENV_RULE:
+        return ENV_RULE  # env set: config.json is ignored
     # exact key match first, then wildcard keys in file order
     cfg = load_config()
     if not isinstance(model, str):
